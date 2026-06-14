@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../utils/app_settings.dart';
+import '../../utils/app_colors.dart';
 import '../../models/customer.dart';
 import '../../services/customer_service.dart';
 import 'customer_form_screen.dart';
+import 'customer_detail_screen.dart';
 
 class CustomerListScreen extends StatelessWidget {
   const CustomerListScreen({super.key});
@@ -83,7 +85,7 @@ class CustomerListScreen extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => CustomerFormScreen(customer: customer),
+                          builder: (context) => CustomerDetailScreen(customer: customer),
                         ),
                       );
                     },

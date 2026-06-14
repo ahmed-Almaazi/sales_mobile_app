@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../shared/scanner_screen.dart';
 
 class ProductFormScreen extends StatefulWidget {
   final Map<String, dynamic>? product;
@@ -224,6 +225,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     }
   }
 
+  void _scanBarcode() async {
+    final String? barcode = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const ScannerScreen()),
+    );
+    if (barcode != null) {
+      setState(() {
+        _barcodeController.text = barcode;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -261,7 +274,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               children: [
                 _buildSectionTitle('المعلومات الأساسية', Icons.info_outline_rounded),
                 _buildTextField(_nameController, 'اسم المنتج', Icons.shopping_bag_outlined, validator: (v) => v!.isEmpty ? 'مطلوب' : null),
-                _buildTextField(_barcodeController, 'الباركود', Icons.qr_code_scanner_rounded, isLast: true),
+                _buildTextField(_barcodeController, 'الباركود', Icons.qr_code_scanner_rounded, isLast: true, onIconTap: _scanBarcode),
                 
                 const Divider(height: 32, color: Color(0xFFF1F5F9)),
                 _buildSectionTitle('التفاصيل', Icons.tune_rounded),
@@ -451,6 +464,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     int maxLines = 1,
     String? Function(String?)? validator,
     bool isLast = false,
+    VoidCallback? onIconTap,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -461,7 +475,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-          prefixIcon: Icon(icon, size: 20, color: const Color(0xFF64748B)),
+          prefixIcon: onIconTap != null
+              ? IconButton(
+                  icon: Icon(icon, size: 20, color: const Color(0xFF0F172A)),
+                  onPressed: onIconTap,
+                )
+              : Icon(icon, size: 20, color: const Color(0xFF64748B)),
           filled: true,
           fillColor: const Color(0xFFF8FAFC),
           border: OutlineInputBorder(

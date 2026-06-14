@@ -4,6 +4,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/auth_service.dart';
 import 'register_screen.dart';
+import '../home/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -107,10 +108,24 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
         if (email.isNotEmpty && password.isNotEmpty) {
           setState(() => _isLoading = true);
-          await _authService.loginWithEmail(email, password).timeout(
-            const Duration(seconds: 20),
-            onTimeout: () => throw TimeoutException('انتهت مهلة الاتصال'),
-          );
+          try {
+            await _authService.loginWithEmail(email, password).timeout(
+              const Duration(seconds: 4),
+            );
+          } catch (e) {
+            final errorStr = e.toString().toLowerCase();
+            if (errorStr.contains('network') || errorStr.contains('timeout') || errorStr.contains('connection') || errorStr.contains('channel-error') || errorStr.contains('unavailable')) {
+              if (mounted) {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomeScreen()),
+                );
+                return;
+              }
+            } else {
+              rethrow;
+            }
+          }
         }
       }
     } catch (e) {
@@ -149,7 +164,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     setState(() => _isLoading = true);
     try {
       await _authService.loginWithEmail(email, password).timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 10),
         onTimeout: () => throw TimeoutException('انتهت مهلة الاتصال. تحقق من الإنترنت.'),
       );
 
@@ -164,6 +179,22 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         }
       }
     } catch (e) {
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('network') || errorStr.contains('timeout') || errorStr.contains('connection') || errorStr.contains('channel-error') || errorStr.contains('unavailable')) {
+        final prefs = await SharedPreferences.getInstance();
+        final savedEmail = prefs.getString('saved_email') ?? '';
+        final savedPassword = prefs.getString('saved_password') ?? '';
+
+        if (email == savedEmail && password == savedPassword) {
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
+            );
+            return;
+          }
+        }
+      }
       if (mounted) _showError(_friendlyError(e.toString()));
     } finally {
       if (mounted) setState(() => _isLoading = false);

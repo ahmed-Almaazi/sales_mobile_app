@@ -91,11 +91,66 @@ class FinanceService {
       'timestamp': FieldValue.serverTimestamp(),
     });
 
-    // 2. خصم المبلغ من مديونية العميل
+    // 2. خصم المبلغ من مديونية العميل العامة
     final customerRef = _db.collection('customers').doc(customerId);
     batch.update(customerRef, {'balance': FieldValue.increment(-amount)});
 
-    // 3. تحديث الصندوق المجمع
+    // 3. خصم المبلغ من الفواتير المتبقية بالتوالي (FIFO)
+    final salesQuery = await _db.collection('sales')
+        .where('customerId', isEqualTo: customerId)
+        .get();
+
+    // تصفية وفرز الفواتير محلياً لتجنب الحاجة لفهرس مركب (Composite Index)
+    final docs = salesQuery.docs.where((doc) {
+      final data = doc.data();
+      return data['status'] == 'COMPLETED';
+    }).toList();
+
+    docs.sort((a, b) {
+      final aTime = a.data()['createdAt'] as Timestamp?;
+      final bTime = b.data()['createdAt'] as Timestamp?;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      return aTime.compareTo(bTime);
+    });
+
+    double remainingPayment = amount;
+    for (var doc in docs) {
+      if (remainingPayment <= 0) break;
+      final data = doc.data();
+      final double totalAmount = (data['totalAmount'] ?? 0.0).toDouble();
+      final double paidAmount = (data['paidAmount'] ?? 0.0).toDouble();
+      final double invoiceRemaining = totalAmount - paidAmount;
+
+      if (invoiceRemaining > 0) {
+        if (remainingPayment >= invoiceRemaining) {
+          // سداد الفاتورة بالكامل
+          batch.update(doc.reference, {
+            'paidAmount': totalAmount,
+            'remainingAmount': 0.0,
+          });
+          remainingPayment -= invoiceRemaining;
+          
+          // تحديث التذكيرات المرتبطة بهذه الفاتورة إلى مكتملة (COMPLETED)
+          final reminderQuery = await _db.collection('reminders')
+              .where('invoiceNumber', isEqualTo: data['invoiceNumber'])
+              .where('status', isEqualTo: 'PENDING')
+              .get();
+          for (var remDoc in reminderQuery.docs) {
+            batch.update(remDoc.reference, {'status': 'COMPLETED'});
+          }
+        } else {
+          // سداد جزء من الفاتورة
+          batch.update(doc.reference, {
+            'paidAmount': paidAmount + remainingPayment,
+            'remainingAmount': invoiceRemaining - remainingPayment,
+          });
+          remainingPayment = 0;
+        }
+      }
+    }
+
+    // 4. تحديث الصندوق المجمع
     final cashboxRef = _db.collection('counters').doc('cashbox');
     batch.set(cashboxRef, {'balance': FieldValue.increment(amount)}, SetOptions(merge: true));
 

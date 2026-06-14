@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
+import 'utils/app_colors.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
 
@@ -20,10 +21,6 @@ void main() async {
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
-
-  // ✅ تسجيل الخروج من Firebase عند كل بداية تشغيل
-  // سيتم إعادة تسجيل الدخول عبر كلمة المرور أو البصمة
-  await FirebaseAuth.instance.signOut();
 
   runApp(const MyApp());
 }
@@ -48,7 +45,7 @@ class MyApp extends StatelessWidget {
       locale: const Locale('ar', 'SA'),
       theme: ThemeData(
         fontFamily: 'Cairo',
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue.shade800),
+        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
         useMaterial3: true,
       ),
       home: const AuthWrapper(),

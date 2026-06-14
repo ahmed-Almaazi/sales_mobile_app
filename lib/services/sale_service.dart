@@ -18,7 +18,21 @@ class SaleService {
     required double paidAmount,
     String warehouseId = 'MAIN',
     DateTime? invoiceDate,
+    DateTime? dueDate,
   }) async {
+    // 0. التحقق من توفر المخزون الكافي للمنتجات قبل إتمام عملية البيع
+    for (var item in items) {
+      final productDoc = await _db.collection('products').doc(item['productId']).get();
+      if (!productDoc.exists) {
+        throw Exception('المنتج "${item['name'] ?? ''}" غير موجود في قاعدة البيانات');
+      }
+      final double currentStock = (productDoc.data()?['currentStock'] ?? 0.0).toDouble();
+      final double requestedQty = (item['quantity'] ?? 0.0).toDouble();
+      if (currentStock < requestedQty) {
+        throw Exception('عذراً، الكمية المطلوبة للمنتج "${item['name'] ?? ''}" غير متوفرة. المتوفر حالياً: $currentStock');
+      }
+    }
+
     final batch = _db.batch();
 
     // 1. توليد رقم فاتورة احترافي (SAL-000001)
@@ -39,10 +53,12 @@ class SaleService {
       'customerName': customerName,
       'totalAmount': totalAmount,
       'paidAmount': paidAmount,
+      'remainingAmount': totalAmount - paidAmount,
       'profit': profit,
       'items': items,
       'warehouseId': warehouseId,
       'status': 'COMPLETED',
+      'dueDate': dueDate != null ? Timestamp.fromDate(dueDate) : null,
       'createdAt': invoiceDate != null ? Timestamp.fromDate(invoiceDate) : FieldValue.serverTimestamp(),
     });
 
@@ -82,6 +98,20 @@ class SaleService {
     if (debt > 0 && customerId != null) {
       final customerRef = _db.collection('customers').doc(customerId);
       batch.update(customerRef, {'balance': FieldValue.increment(debt)});
+
+      // إنشاء تذكير سداد في جدول reminders
+      if (dueDate != null) {
+        final reminderRef = _db.collection('reminders').doc();
+        batch.set(reminderRef, {
+          'customerId': customerId,
+          'customerName': customerName,
+          'invoiceNumber': finalInvoiceNumber,
+          'amount': debt,
+          'dueDate': Timestamp.fromDate(dueDate),
+          'status': 'PENDING',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
     }
 
     // 7. إضافة الربح لرأس المال

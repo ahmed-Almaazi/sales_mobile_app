@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 import '../../services/auth_service.dart';
 import '../products/product_form_screen.dart';
 import '../invoices/create_invoice_screen.dart';
@@ -14,6 +15,8 @@ import '../settings/printer_settings_screen.dart';
 import '../categories/category_list_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../utils/app_settings.dart';
+import '../../utils/app_colors.dart';
+import 'widgets/home_drawer.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -108,15 +111,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC), // Cool grey-slate background
-      drawer: _buildDrawer(),
+      backgroundColor: AppColors.background,
+      drawer: HomeDrawer(onSettingsUpdated: _loadSettings),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        iconTheme: const IconThemeData(color: Color(0xFF0F172A)),
+        iconTheme: const IconThemeData(color: AppColors.textDark),
         title: const Text(
           'لوحة التحكم',
-          style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A), fontSize: 20),
+          style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textDark, fontSize: 20),
         ),
         centerTitle: true,
         actions: [
@@ -630,6 +633,12 @@ class _HomeScreenState extends State<HomeScreen> {
           .orderBy('createdAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text('حدث خطأ أثناء تحميل الفواتير: ${snapshot.error}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.red, fontSize: 13)),
+          ));
+        }
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -1482,233 +1491,241 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Widget _buildDrawer() {
-    return Drawer(
-      backgroundColor: Colors.white,
-      child: Column(
-        children: [
-          const UserAccountsDrawerHeader(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF0F172A), Color(0xFF1E3A8A)],
-              ),
-            ),
-            accountName: Text('مدير النظام', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            accountEmail: Text('admin@example.com', style: TextStyle(color: Colors.white70)),
-            currentAccountPicture: CircleAvatar(
-              backgroundColor: Colors.white,
-              child: Icon(Icons.person_rounded, size: 44, color: Color(0xFF1E3A8A)),
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              children: [
-                _buildDrawerTile(Icons.shopping_cart_checkout_rounded, 'فاتورة مشتريات جديدة', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatePurchaseScreen()));
-                }),
-                const Divider(color: Color(0xFFF1F5F9)),
-                _buildDrawerTile(Icons.category_rounded, 'إدارة الأصناف', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CategoryListScreen()));
-                }),
-                _buildDrawerTile(Icons.people_alt_rounded, 'إدارة العملاء', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerListScreen()));
-                }),
-                _buildDrawerTile(Icons.local_shipping_rounded, 'إدارة الموردين', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SupplierListScreen()));
-                }),
-                _buildDrawerTile(Icons.account_balance_wallet_rounded, 'المالية والصندوق', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CashboxScreen()));
-                }),
-                _buildDrawerTile(Icons.bar_chart_rounded, 'التقارير والإحصائيات', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
-                }),
-                const Divider(color: Color(0xFFF1F5F9)),
-                _buildDrawerTile(Icons.print_rounded, 'إعدادات الطابعة', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsScreen()));
-                }),
-                _buildDrawerTile(Icons.settings_rounded, 'الإعدادات', () async {
-                  Navigator.pop(context);
-                  await Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                  _loadSettings();
-                }),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDrawerTile(IconData icon, String title, VoidCallback onTap) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        leading: Icon(icon, color: const Color(0xFF64748B), size: 22),
-        title: Text(title, style: const TextStyle(color: Color(0xFF334155), fontWeight: FontWeight.bold, fontSize: 13)),
-        onTap: onTap,
-        dense: true,
-      ),
-    );
-  }
-
   Widget _buildNotificationBell() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('products')
           .where('currentStock', isLessThanOrEqualTo: 20)
           .snapshots(),
-      builder: (context, snapshot) {
-        int alertCount = 0;
-        List<DocumentSnapshot> lowStockDocs = [];
-        if (snapshot.hasData) {
-          lowStockDocs = snapshot.data!.docs.where((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            return (data['currentStock'] ?? 0) <= (data['minStock'] ?? 5);
-          }).toList();
-          alertCount = lowStockDocs.length;
-        }
+      builder: (context, productSnapshot) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('reminders')
+              .where('status', isEqualTo: 'PENDING')
+              .snapshots(),
+          builder: (context, reminderSnapshot) {
+            int alertCount = 0;
+            List<DocumentSnapshot> lowStockDocs = [];
+            List<DocumentSnapshot> reminderDocs = [];
 
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.notifications_none_rounded, color: Color(0xFF0F172A)),
-              onPressed: () {
-                _showNotificationsBottomSheet(lowStockDocs);
-              },
-            ),
-            if (alertCount > 0)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                  constraints: const BoxConstraints(
-                    minWidth: 14,
-                    minHeight: 14,
-                  ),
-                  child: Text(
-                    '$alertCount',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 8,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+            if (productSnapshot.hasData) {
+              lowStockDocs = productSnapshot.data!.docs.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return (data['currentStock'] ?? 0) <= (data['minStock'] ?? 5);
+              }).toList();
+            }
+
+            if (reminderSnapshot.hasData) {
+              reminderDocs = reminderSnapshot.data!.docs.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                if (data['dueDate'] == null) return false;
+                final Timestamp dueTs = data['dueDate'] as Timestamp;
+                final dueDate = dueTs.toDate();
+                final now = DateTime.now();
+                final today = DateTime(now.year, now.month, now.day);
+                final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+                return dueDay.isBefore(today) || dueDay.isAtSameMomentAs(today);
+              }).toList();
+            }
+
+            alertCount = lowStockDocs.length + reminderDocs.length;
+
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_none_rounded, color: Color(0xFF0F172A)),
+                  onPressed: () {
+                    _showNotificationsBottomSheet(lowStockDocs, reminderDocs);
+                  },
                 ),
-              ),
-          ],
+                if (alertCount > 0)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 14,
+                        minHeight: 14,
+                      ),
+                      child: Text(
+                        '$alertCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  void _showNotificationsBottomSheet(List<DocumentSnapshot> lowStockDocs) {
+  void _showNotificationsBottomSheet(List<DocumentSnapshot> lowStockDocs, List<DocumentSnapshot> reminderDocs) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          maxChildSize: 0.85,
+          minChildSize: 0.4,
+          expand: false,
+          builder: (context, scrollController) {
+            final hasNotifications = lowStockDocs.isNotEmpty || reminderDocs.isNotEmpty;
+
+            return Container(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'التنبيهات والإشعارات',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'التنبيهات والإشعارات',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
-                    onPressed: () => Navigator.pop(context),
-                  ),
+                  const Divider(color: Color(0xFFF1F5F9)),
+                  const SizedBox(height: 8),
+                  if (!hasNotifications)
+                    const Expanded(
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.notifications_off_outlined, color: Color(0xFF94A3B8), size: 48),
+                            SizedBox(height: 12),
+                            Text('لا توجد إشعارات جديدة حالياً', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: ListView(
+                        controller: scrollController,
+                        children: [
+                          if (reminderDocs.isNotEmpty) ...[
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8.0),
+                              child: Text('تذكيرات سداد المديونيات المستحقة', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFDC2626), fontSize: 14)),
+                            ),
+                            ...reminderDocs.map((doc) {
+                              final data = doc.data() as Map<String, dynamic>;
+                              final String customerName = data['customerName'] ?? '';
+                              final String invoiceNumber = data['invoiceNumber'] ?? '';
+                              final double amount = (data['amount'] ?? 0.0).toDouble();
+                              final Timestamp dueTs = data['dueDate'] as Timestamp;
+                              final dateStr = DateFormat('yyyy-MM-dd').format(dueTs.toDate());
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF2F2),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0xFFFCA5A5)),
+                                ),
+                                child: ListTile(
+                                  leading: const Icon(Icons.alarm_on_rounded, color: Color(0xFFDC2626)),
+                                  title: Text('العميل: $customerName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
+                                  subtitle: Text('فاتورة: $invoiceNumber | المبلغ: ${amount.toStringAsFixed(1)} ${AppSettings.currency}\nتاريخ الاستحقاق: $dateStr', style: const TextStyle(fontSize: 11, color: Color(0xFF991B1B))),
+                                  trailing: ElevatedButton(
+                                    onPressed: () async {
+                                      Navigator.pop(context);
+                                      // فتح شاشة العملاء للتحصيل وسداد الديون
+                                      setState(() {
+                                        _selectedIndex = 0; // الذهاب للشاشة الرئيسية
+                                      });
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(builder: (context) => const CustomerListScreen()),
+                                      );
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFDC2626),
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    child: const Text('تحصيل', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              );
+                            }),
+                            const SizedBox(height: 16),
+                          ],
+                          if (lowStockDocs.isNotEmpty) ...[
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8.0),
+                              child: Text('نقص مخزون المنتجات', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFD97706), fontSize: 14)),
+                            ),
+                            ...lowStockDocs.map((doc) {
+                              final data = doc.data() as Map<String, dynamic>;
+                              final String name = data['name'] ?? '';
+                              final int stock = data['currentStock'] ?? 0;
+                              final int minStock = data['minStock'] ?? 5;
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFFBEB),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0xFFFDE68A)),
+                                ),
+                                child: ListTile(
+                                  leading: const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706)),
+                                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
+                                  subtitle: Text('الكمية الحالية: $stock قطعة | الحد الأدنى: $minStock قطعة', style: const TextStyle(fontSize: 11, color: Color(0xFFB45309))),
+                                  trailing: ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                      setState(() {
+                                        _selectedIndex = 1; // Go to inventory tab
+                                      });
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFD97706),
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    child: const Text('عرض', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ],
+                      ),
+                    ),
                 ],
               ),
-              const Divider(color: Color(0xFFF1F5F9)),
-              const SizedBox(height: 8),
-              if (lowStockDocs.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Icon(Icons.notifications_off_outlined, color: Color(0xFF94A3B8), size: 48),
-                        SizedBox(height: 12),
-                        Text('لا توجد إشعارات جديدة حالياً', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                Flexible(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: lowStockDocs.length,
-                    itemBuilder: (context, index) {
-                      final data = lowStockDocs[index].data() as Map<String, dynamic>;
-                      final String name = data['name'] ?? '';
-                      final int stock = data['currentStock'] ?? 0;
-                      final int minStock = data['minStock'] ?? 5;
-
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFFBEB),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFFDE68A)),
-                        ),
-                        child: ListTile(
-                          leading: const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706)),
-                          title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A))),
-                          subtitle: Text('الكمية الحالية: $stock قطعة | الحد الأدنى: $minStock قطعة', style: const TextStyle(fontSize: 11, color: Color(0xFFB45309))),
-                          trailing: ElevatedButton(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              setState(() {
-                                _selectedIndex = 1; // Go to inventory tab
-                              });
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFD97706),
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('عرض', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
+            );
+          },
         );
       },
     );

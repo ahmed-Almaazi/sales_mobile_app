@@ -23,6 +23,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
   
   Customer? _selectedCustomer;
   String _selectedWarehouse = 'MAIN';
+  DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
 
   @override
   void initState() {
@@ -52,6 +53,113 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
       });
     }
   }
+
+  void _pickDueDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _dueDate,
+      firstDate: DateTime.now(),
+      lastDate: DateTime(2101),
+    );
+    if (picked != null && picked != _dueDate) {
+      setState(() {
+        _dueDate = picked;
+      });
+    }
+  }
+
+  void _createNewCustomerQuickly() {
+    final formKey = GlobalKey<FormState>();
+    final storeNameController = TextEditingController();
+    final phoneController = TextEditingController();
+    final addressController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إضافة عميل جديد سريعاً', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: storeNameController,
+                  decoration: const InputDecoration(labelText: 'اسم المحل / المنشأة *'),
+                  validator: (v) => v == null || v.trim().isEmpty ? 'الرجاء إدخال اسم المنشأة' : null,
+                ),
+                TextFormField(
+                  controller: phoneController,
+                  decoration: const InputDecoration(labelText: 'رقم الهاتف'),
+                  keyboardType: TextInputType.phone,
+                ),
+                TextFormField(
+                  controller: addressController,
+                  decoration: const InputDecoration(labelText: 'العنوان / الموقع'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (formKey.currentState!.validate()) {
+                final String storeName = storeNameController.text.trim();
+                final String phone = phoneController.text.trim();
+                final String address = addressController.text.trim();
+                Navigator.pop(context);
+
+                setState(() => _isLoading = true);
+                try {
+                  final docRef = await FirebaseFirestore.instance.collection('customers').add({
+                    'storeName': storeName,
+                    'phone': phone,
+                    'region': address,
+                    'balance': 0.0,
+                    'createdAt': FieldValue.serverTimestamp(),
+                  });
+
+                  if (mounted) {
+                    setState(() {
+                      _selectedCustomer = Customer(
+                        id: docRef.id,
+                        storeName: storeName,
+                        contactName: '',
+                        phone: phone,
+                        region: address,
+                        balance: 0.0,
+                      );
+                      _customerNameController.text = storeName;
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('تم تسجيل العميل وتحديده بنجاح')),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('خطأ أثناء إضافة العميل: $e')),
+                    );
+                  }
+                } finally {
+                  if (mounted) setState(() => _isLoading = false);
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A), foregroundColor: Colors.white),
+            child: const Text('حفظ واختيار'),
+          ),
+        ],
+      ),
+    );
+  }
+
 
   void _scanBarcode() async {
     final String? barcode = await Navigator.push(
@@ -266,6 +374,11 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
   }
 
   void _saveInvoice() async {
+    if (_selectedCustomer == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء اختيار العميل أولاً (اسم العميل مطلوب للفاتورة)')));
+      return;
+    }
+
     if (_selectedProducts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء إضافة منتجات للفاتورة')));
       return;
@@ -282,13 +395,14 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
       // 2. بدء عملية الحفظ في الخلفية
       final saveFuture = _saleService.createSaleInvoice(
         invoiceNumber: invoiceNumber,
-        customerId: _selectedCustomer?.id,
-        customerName: _customerNameController.text.trim().isEmpty ? 'عميل نقدي' : _customerNameController.text.trim(),
+        customerId: _selectedCustomer!.id,
+        customerName: _selectedCustomer!.storeName,
         items: _selectedProducts,
         totalAmount: _totalAmount,
         paidAmount: paidAmount,
         warehouseId: _selectedWarehouse,
         invoiceDate: _selectedDate,
+        dueDate: _remainingAmount > 0 ? _dueDate : null,
       );
 
       // 3. الانتظار لمدة أقصاها ثانيتين للتأكيد من الخادم
@@ -355,20 +469,39 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  TextField(
-                    controller: _customerNameController,
-                    decoration: InputDecoration(
-                      labelText: 'اسم العميل',
-                      labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                      prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B)),
-                      suffixIcon: IconButton(icon: const Icon(Icons.search_rounded, color: Color(0xFF0F172A)), onPressed: _showCustomerSelection),
-                      filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF0F172A), width: 1.5)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _customerNameController,
+                          readOnly: true,
+                          onTap: _showCustomerSelection,
+                          decoration: InputDecoration(
+                            labelText: 'اسم العميل * (انقر للاختيار)',
+                            labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                            prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B)),
+                            suffixIcon: const Icon(Icons.search_rounded, color: Color(0xFF0F172A)),
+                            filled: true,
+                            fillColor: const Color(0xFFF8FAFC),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF0F172A), width: 1.5)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: _createNewCustomerQuickly,
+                        icon: const Icon(Icons.person_add_alt_1_rounded),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF1E3A8A),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.all(14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -442,6 +575,30 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
                       ),
                     ),
                   ),
+                  if (_remainingAmount > 0) ...[
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: _pickDueDate,
+                      borderRadius: BorderRadius.circular(14),
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'تاريخ استحقاق المديونية المتبقية *',
+                          labelStyle: const TextStyle(color: Color(0xFFDC2626), fontSize: 13),
+                          prefixIcon: const Icon(Icons.notifications_active_rounded, color: Color(0xFFDC2626), size: 20),
+                          filled: true,
+                          fillColor: const Color(0xFFFEF2F2),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFFCA5A5))),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFFCA5A5))),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1.5)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        ),
+                        child: Text(
+                          "${_dueDate.year}-${_dueDate.month.toString().padLeft(2, '0')}-${_dueDate.day.toString().padLeft(2, '0')}",
+                          style: const TextStyle(fontSize: 14, color: Color(0xFFDC2626), fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

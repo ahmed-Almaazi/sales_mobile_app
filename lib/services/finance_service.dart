@@ -47,8 +47,18 @@ class FinanceService {
     required String category, // 'SHIPPING', 'TRANSPORT', 'WORKERS', 'MAINTENANCE', 'SUNDRIES', 'OTHER'
     required String notes,
   }) async {
+    // التحقق من أن رصيد الصندوق كافٍ
+    final cashbalance = await getCurrentCashBalance();
+    if (cashbalance < amount) {
+      throw Exception(
+        'رصيد الصندوق غير كافٍ لتسجيل هذا المصروف.\n'
+        'الرصيد الحالي: ${cashbalance.toStringAsFixed(1)}\n'
+        'المبلغ المطلوب: ${amount.toStringAsFixed(1)}'
+      );
+    }
+
     final batch = _db.batch();
-    
+
     // 1. تسجيل العملية في الصندوق
     final cashRef = _db.collection('cash_transactions').doc();
     batch.set(cashRef, {
@@ -68,6 +78,48 @@ class FinanceService {
     final capitalRef = _db.collection('counters').doc('capital');
     batch.set(capitalRef, {'balance': FieldValue.increment(-amount)}, SetOptions(merge: true));
 
+    // 4. سجل المراقبة
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'RECORD_EXPENSE',
+      'details': 'تسجيل مصروف: $notes - المبلغ: $amount - الفئة: $category',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+  }
+
+  /// تسجيل إيراد يدوي (إضافة مبلغ للصندوق ورأس المال)
+  Future<void> recordIncome({
+    required double amount,
+    required String category,
+    required String notes,
+  }) async {
+    final batch = _db.batch();
+
+    final cashRef = _db.collection('cash_transactions').doc();
+    batch.set(cashRef, {
+      'amount': amount,
+      'type': 'IN',
+      'description': 'إيراد: $notes',
+      'reference': 'INCOME',
+      'category': category,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    final cashboxRef = _db.collection('counters').doc('cashbox');
+    batch.set(cashboxRef, {'balance': FieldValue.increment(amount)}, SetOptions(merge: true));
+
+    final capitalRef = _db.collection('counters').doc('capital');
+    batch.set(capitalRef, {'balance': FieldValue.increment(amount)}, SetOptions(merge: true));
+
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'RECORD_INCOME',
+      'details': 'تسجيل إيراد: $notes - المبلغ: $amount - الفئة: $category',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
     await batch.commit();
   }
 
@@ -79,7 +131,7 @@ class FinanceService {
     required String notes,
   }) async {
     final batch = _db.batch();
-    
+
     // 1. تسجيل العملية في الصندوق
     final cashRef = _db.collection('cash_transactions').doc();
     batch.set(cashRef, {
@@ -103,7 +155,7 @@ class FinanceService {
     // تصفية وفرز الفواتير محلياً لتجنب الحاجة لفهرس مركب (Composite Index)
     final docs = salesQuery.docs.where((doc) {
       final data = doc.data();
-      return data['status'] == 'COMPLETED';
+      return data['status'] == 'COMPLETED' || data['status'] == 'PARTIALLY_RETURNED';
     }).toList();
 
     docs.sort((a, b) {
@@ -130,7 +182,7 @@ class FinanceService {
             'remainingAmount': 0.0,
           });
           remainingPayment -= invoiceRemaining;
-          
+
           // تحديث التذكيرات المرتبطة بهذه الفاتورة إلى مكتملة (COMPLETED)
           final reminderQuery = await _db.collection('reminders')
               .where('invoiceNumber', isEqualTo: data['invoiceNumber'])
@@ -154,6 +206,14 @@ class FinanceService {
     final cashboxRef = _db.collection('counters').doc('cashbox');
     batch.set(cashboxRef, {'balance': FieldValue.increment(amount)}, SetOptions(merge: true));
 
+    // 5. سجل المراقبة
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'CUSTOMER_PAYMENT',
+      'details': 'استلام دفعة من العميل $customerName بقيمة $amount - $notes',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
     await batch.commit();
   }
 
@@ -164,8 +224,18 @@ class FinanceService {
     required double amount,
     required String notes,
   }) async {
+    // التحقق من أن رصيد الصندوق كافٍ
+    final cashbalance = await getCurrentCashBalance();
+    if (cashbalance < amount) {
+      throw Exception(
+        'رصيد الصندوق غير كافٍ لتسجيل هذا السداد.\n'
+        'الرصيد الحالي: ${cashbalance.toStringAsFixed(1)}\n'
+        'المبلغ المطلوب: ${amount.toStringAsFixed(1)}'
+      );
+    }
+
     final batch = _db.batch();
-    
+
     // 1. تسجيل العملية في الصندوق (صادر)
     final cashRef = _db.collection('cash_transactions').doc();
     batch.set(cashRef, {
@@ -184,6 +254,14 @@ class FinanceService {
     // 3. تحديث الصندوق المجمع
     final cashboxRef = _db.collection('counters').doc('cashbox');
     batch.set(cashboxRef, {'balance': FieldValue.increment(-amount)}, SetOptions(merge: true));
+
+    // 4. سجل المراقبة
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'SUPPLIER_PAYMENT',
+      'details': 'سداد دفعة للمورد $supplierName بقيمة $amount - $notes',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
 
     await batch.commit();
   }
@@ -206,9 +284,102 @@ class FinanceService {
     return 0.0;
   }
 
-  /// تعديل رأس المال مباشرة
+  /// تعديل رأس المال مباشرة مع تسجيل الحدث في سجل المراقبة
   Future<void> updateCapital(double newBalance) async {
-    await _db.collection('counters').doc('capital').set({'balance': newBalance}, SetOptions(merge: true));
+    final batch = _db.batch();
+
+    final currentBalance = await getCurrentCapitalBalance();
+    final double difference = newBalance - currentBalance;
+
+    // تحديث رأس المال
+    final capitalRef = _db.collection('counters').doc('capital');
+    batch.set(capitalRef, {'balance': newBalance}, SetOptions(merge: true));
+
+    // سجل المراقبة — إلزامي لأي تعديل على رأس المال
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'UPDATE_CAPITAL',
+      'details': 'تعديل يدوي لرأس المال من $currentBalance إلى $newBalance (الفرق: ${difference > 0 ? '+' : ''}${difference.toStringAsFixed(1)})',
+      'oldBalance': currentBalance,
+      'newBalance': newBalance,
+      'difference': difference,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+  }
+
+  /// إضافة مبلغ لرأس المال يدوياً (رأس مال مُضاف)
+  Future<void> addCapital({
+    required double amount,
+    required String notes,
+  }) async {
+    final batch = _db.batch();
+
+    final capitalRef = _db.collection('counters').doc('capital');
+    batch.set(capitalRef, {'balance': FieldValue.increment(amount)}, SetOptions(merge: true));
+
+    // تسجيل الإضافة في الصندوق أيضاً كدخل
+    final cashRef = _db.collection('cash_transactions').doc();
+    batch.set(cashRef, {
+      'amount': amount,
+      'type': 'IN',
+      'description': 'إضافة رأس مال: $notes',
+      'reference': 'CAPITAL_ADD',
+      'category': 'CAPITAL',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    final cashboxRef = _db.collection('counters').doc('cashbox');
+    batch.set(cashboxRef, {'balance': FieldValue.increment(amount)}, SetOptions(merge: true));
+
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'ADD_CAPITAL',
+      'details': 'إضافة رأس مال بقيمة $amount - $notes',
+      'amount': amount,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+  }
+
+  /// الحصول على ملخص مالي شامل
+  Future<Map<String, double>> getFinancialSummary() async {
+    final cashboxDoc = await _db.collection('counters').doc('cashbox').get();
+    final capitalDoc = await _db.collection('counters').doc('capital').get();
+
+    double cashBalance = 0.0;
+    double capitalBalance = 0.0;
+
+    if (cashboxDoc.exists) {
+      cashBalance = (cashboxDoc.data()?['balance'] ?? 0.0).toDouble();
+    }
+    if (capitalDoc.exists) {
+      capitalBalance = (capitalDoc.data()?['balance'] ?? 0.0).toDouble();
+    }
+
+    // حساب إجمالي الديون
+    double totalCustomerDebt = 0.0;
+    final customersSnapshot = await _db.collection('customers').get();
+    for (var doc in customersSnapshot.docs) {
+      final balance = (doc.data()['balance'] ?? 0.0).toDouble();
+      if (balance > 0) totalCustomerDebt += balance;
+    }
+
+    double totalSupplierDebt = 0.0;
+    final suppliersSnapshot = await _db.collection('suppliers').get();
+    for (var doc in suppliersSnapshot.docs) {
+      final balance = (doc.data()['balance'] ?? 0.0).toDouble();
+      if (balance > 0) totalSupplierDebt += balance;
+    }
+
+    return {
+      'cashBalance': cashBalance,
+      'capitalBalance': capitalBalance,
+      'totalCustomerDebt': totalCustomerDebt,
+      'totalSupplierDebt': totalSupplierDebt,
+      'netPosition': cashBalance + totalCustomerDebt - totalSupplierDebt,
+    };
   }
 }
-

@@ -395,10 +395,10 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with Single
         ),
       );
 
-      // 5. مشاركة وتخطيط الـ PDF للطباعة
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdf.save(),
-        name: 'كشف_حساب_${_currentCustomer.storeName}.pdf',
+      // 5. فتح نافذة المشاركة وحفظ الملف في الهاتف
+      await Printing.sharePdf(
+        bytes: await pdf.save(),
+        filename: 'كشف_حساب_${_currentCustomer.storeName}.pdf',
       );
     } catch (e) {
       if (mounted) {

@@ -5,14 +5,9 @@ import 'package:intl/intl.dart';
 import '../../services/auth_service.dart';
 import '../products/product_form_screen.dart';
 import '../invoices/create_invoice_screen.dart';
-import '../invoices/create_purchase_screen.dart';
 import '../customers/customer_list_screen.dart';
-import '../suppliers/supplier_list_screen.dart';
-import '../finance/cashbox_screen.dart';
-import '../reports/reports_screen.dart';
 import '../../services/sale_service.dart';
 import '../settings/printer_settings_screen.dart';
-import '../categories/category_list_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../utils/app_settings.dart';
 import '../../utils/app_colors.dart';
@@ -76,12 +71,53 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _deleteProduct(String id) {
+  void _deleteProduct(String id, String productName) async {
+    // التحقق من وجود فواتير مرتبطة بهذا المنتج
+    final salesWithProduct = await FirebaseFirestore.instance
+        .collection('sales')
+        .get();
+    bool hasActiveInvoices = false;
+    for (var doc in salesWithProduct.docs) {
+      if (doc.data()['status'] == 'RETURNED') continue;
+      final List<dynamic> items = doc.data()['items'] ?? [];
+      for (var item in items) {
+        if (item['productId'] == id) {
+          hasActiveInvoices = true;
+          break;
+        }
+      }
+      if (hasActiveInvoices) break;
+    }
+
+    if (!mounted) return;
+
+    if (hasActiveInvoices) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('لا يمكن الحذف', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEF4444))),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          content: Text(
+            'المنتج "$productName" مرتبط بفواتير مبيعات نشطة.\nلا يمكن حذفه لضمان سلامة البيانات المحاسبية.',
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A)),
+              child: const Text('حسناً', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('حذف منتج'),
-        content: const Text('هل أنت متأكد من حذف هذا المنتج نهائياً؟'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        content: Text('هل أنت متأكد من حذف المنتج "$productName" نهائياً؟'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -216,40 +252,116 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDashboard() {
+    final today = DateTime.now();
+    final todayKey = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              CircleAvatar(
+              const CircleAvatar(
                 radius: 24,
                 backgroundColor: Color(0x1A1E3A8A),
                 child: Icon(Icons.person_rounded, color: Color(0xFF1E3A8A), size: 24),
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('مرحباً بك مجدداً 👋', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
-                  Text('مدير النظام', style: TextStyle(color: Color(0xFF0F172A), fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text('مرحباً بك مجدداً ', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)),
+                  Text(AppSettings.userName, style: const TextStyle(color: Color(0xFF0F172A), fontSize: 18, fontWeight: FontWeight.bold)),
                 ],
               )
             ],
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+
+          // بطاقة مبيعات اليوم
+          StreamBuilder<DocumentSnapshot>(
+            stream: FirebaseFirestore.instance.collection('daily_stats').doc(todayKey).snapshots(),
+            builder: (context, todaySnap) {
+              double todaySales = 0;
+              double todayProfit = 0;
+              int todayOrders = 0;
+              if (todaySnap.hasData && todaySnap.data!.exists) {
+                final d = todaySnap.data!.data() as Map<String, dynamic>;
+                todaySales = (d['totalSales'] ?? 0.0).toDouble();
+                todayProfit = (d['totalProfit'] ?? 0.0).toDouble();
+                todayOrders = (d['totalOrders'] ?? 0).toInt();
+              }
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF059669), Color(0xFF047857)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF059669).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('📅 مبيعات اليوم', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Text('إجمالي المبيعات', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                          Text('${todaySales.toStringAsFixed(1)} ${AppSettings.currency}',
+                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                        ]),
+                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          const Text('الربح', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                          Text('${todayProfit.toStringAsFixed(1)} ${AppSettings.currency}',
+                              style: const TextStyle(color: Color(0xFF86EFAC), fontSize: 18, fontWeight: FontWeight.bold)),
+                        ]),
+                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          const Text('الطلبات', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                          Text('$todayOrders فاتورة',
+                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                        ]),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
+          const SizedBox(height: 4),
+          // الإحصاءات الإجمالية (مُصلَحة - تستبعد المرتجعات)
           StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance.collection('sales').snapshots(),
             builder: (context, invoiceSnapshot) {
               int totalOrders = 0;
               double totalSales = 0;
+              int returnedOrders = 0;
 
               if (invoiceSnapshot.hasData) {
-                totalOrders = invoiceSnapshot.data!.docs.length;
                 for (var doc in invoiceSnapshot.data!.docs) {
                   var data = doc.data() as Map<String, dynamic>;
-                  totalSales += (data['totalAmount'] ?? 0).toDouble();
+                  final status = data['status'] ?? 'COMPLETED';
+                  if (status != 'RETURNED') {
+                    // استبعاد الفواتير المرتجعة بالكامل من الإحصاءات
+                    totalOrders++;
+                    totalSales += (data['totalAmount'] ?? 0).toDouble();
+                  } else {
+                    returnedOrders++;
+                  }
                 }
               }
 
@@ -265,8 +377,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 12),
                       _buildStatCard(
-                        'إجمالي الطلبات',
-                        '$totalOrders طلب',
+                        'الفواتير النشطة',
+                        '$totalOrders فاتورة',
                         Icons.shopping_bag_rounded,
                         const Color(0xFFD97706),
                       ),
@@ -302,6 +414,27 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     },
                   ),
+                  if (returnedOrders > 0) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.assignment_return_rounded, color: Color(0xFFEF4444), size: 16),
+                          const SizedBox(width: 8),
+                          Text(
+                            'فواتير مرتجعة (مستبعدة من الإحصاءات): $returnedOrders',
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF991B1B), fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               );
             },
@@ -412,7 +545,7 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         ),
-        
+
         // 2. أدوات البحث والفلترة
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -485,7 +618,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-        
+
         // 3. قائمة المنتجات المفلترة
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
@@ -501,13 +634,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 return const Center(child: CircularProgressIndicator());
               }
               final docs = snapshot.data?.docs ?? [];
-              
+
               final filteredDocs = docs.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 final name = (data['name'] ?? '').toString().toLowerCase();
                 final barcode = (data['barcode'] ?? '').toString().toLowerCase();
                 final matchesSearch = name.contains(_searchQuery.toLowerCase()) || barcode.contains(_searchQuery.toLowerCase());
-                
+
                 if (_selectedCategoryFilter != null) {
                   final categoryId = data['categoryId'];
                   return matchesSearch && categoryId == _selectedCategoryFilter;
@@ -589,7 +722,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 20),
-                              onPressed: () => _deleteProduct(doc.id),
+                              onPressed: () => _deleteProduct(doc.id, data['name'] ?? ''),
                             ),
                           ],
                         ),
@@ -980,13 +1113,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: () async {
                   final newPaid = double.tryParse(paidController.text) ?? 0.0;
                   Navigator.pop(context);
-                  
+
                   showDialog(
                     context: context,
                     barrierDismissible: false,
                     builder: (context) => const Center(child: CircularProgressIndicator()),
                   );
-                  
+
                   try {
                     await _saleService.updateSaleInvoice(
                       invoiceId: invoiceId,
@@ -1036,7 +1169,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(context); // close confirm dialog
-              
+
               showDialog(
                 context: context,
                 barrierDismissible: false,
@@ -1104,7 +1237,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(context); // Close confirm dialog
-              
+
               // Show progress indicator
               showDialog(
                 context: context,
@@ -1341,7 +1474,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         _buildProfileTextField(_storeNameController, 'اسم المتجر/النشاط', Icons.store_outlined),
                         _buildProfileTextField(_storePhoneController, 'رقم هاتف المتجر', Icons.phone_outlined, isPhone: true),
                         _buildProfileTextField(_storeAddressController, 'عنوان المتجر', Icons.location_on_outlined),
-                        
+
                         // Currency Selection Field
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
@@ -1458,7 +1591,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _saveProfileChanges() async {
     if (!_profileFormKey.currentState!.validate()) return;
-    
+
     setState(() => _isSettingsLoaded = false);
     try {
       await AppSettings.saveSettings(

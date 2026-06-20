@@ -22,6 +22,11 @@ void main() async {
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
 
+  // فرض تسجيل الخروج عند بداية التشغيل لضمان عدم حفظ الجلسة وطلب البصمة أو كلمة المرور دائماً لحماية البيانات المحاسبية
+  try {
+    await FirebaseAuth.instance.signOut();
+  } catch (_) {}
+
   runApp(const MyApp());
 }
 

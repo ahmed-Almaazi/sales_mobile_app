@@ -33,6 +33,25 @@ class SaleService {
       }
     }
 
+    // التحقق من الحد الائتماني للعميل
+    final double debt = totalAmount - paidAmount;
+    if (debt > 0 && customerId != null) {
+      final customerDoc = await _db.collection('customers').doc(customerId).get();
+      if (customerDoc.exists) {
+        final data = customerDoc.data()!;
+        final double creditLimit = (data['creditLimit'] ?? 0.0).toDouble();
+        final double currentBalance = (data['balance'] ?? 0.0).toDouble();
+        if (creditLimit > 0 && (currentBalance + debt) > creditLimit) {
+          throw Exception(
+            'تجاوز الحد الائتماني للعميل "$customerName".\n'
+            'الحد الائتماني: $creditLimit\n'
+            'الرصيد الحالي: ${currentBalance.toStringAsFixed(1)}\n'
+            'سيصبح الرصيد بعد الفاتورة: ${(currentBalance + debt).toStringAsFixed(1)}'
+          );
+        }
+      }
+    }
+
     final batch = _db.batch();
 
     // 1. توليد رقم فاتورة احترافي (SAL-000001)
@@ -55,6 +74,7 @@ class SaleService {
       'paidAmount': paidAmount,
       'remainingAmount': totalAmount - paidAmount,
       'profit': profit,
+      'totalCost': totalCost,
       'items': items,
       'warehouseId': warehouseId,
       'status': 'COMPLETED',
@@ -87,6 +107,7 @@ class SaleService {
         'type': 'IN',
         'description': 'دفعة من فاتورة مبيعات $finalInvoiceNumber',
         'reference': finalInvoiceNumber,
+        'category': 'SALE',
         'timestamp': FieldValue.serverTimestamp(),
       });
       final cashboxRef = _db.collection('counters').doc('cashbox');
@@ -94,7 +115,6 @@ class SaleService {
     }
 
     // 6. معالجة المديونية
-    final double debt = totalAmount - paidAmount;
     if (debt > 0 && customerId != null) {
       final customerRef = _db.collection('customers').doc(customerId);
       batch.update(customerRef, {'balance': FieldValue.increment(debt)});
@@ -106,6 +126,7 @@ class SaleService {
           'customerId': customerId,
           'customerName': customerName,
           'invoiceNumber': finalInvoiceNumber,
+          'invoiceId': invoiceRef.id,
           'amount': debt,
           'dueDate': Timestamp.fromDate(dueDate),
           'status': 'PENDING',
@@ -120,7 +141,19 @@ class SaleService {
       batch.set(capitalRef, {'balance': FieldValue.increment(profit)}, SetOptions(merge: true));
     }
 
-    // 8. سجل المراقبة (Audit Log)
+    // 8. تحديث إحصاءات اليوم
+    final today = DateTime.now();
+    final dayKey = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final statsRef = _db.collection('daily_stats').doc(dayKey);
+    batch.set(statsRef, {
+      'date': dayKey,
+      'totalSales': FieldValue.increment(totalAmount),
+      'totalProfit': FieldValue.increment(profit),
+      'totalOrders': FieldValue.increment(1),
+      'paidAmount': FieldValue.increment(paidAmount),
+    }, SetOptions(merge: true));
+
+    // 9. سجل المراقبة (Audit Log)
     final auditRef = _db.collection('audit_logs').doc();
     batch.set(auditRef, {
       'action': 'CREATE_SALE',
@@ -173,6 +206,7 @@ class SaleService {
         'type': 'OUT',
         'description': 'رد مبلغ لفاتورة مرتجعة $invoiceNumber',
         'reference': invoiceNumber,
+        'category': 'SALE_RETURN',
         'timestamp': FieldValue.serverTimestamp(),
       });
       final cashboxRef = _db.collection('counters').doc('cashbox');
@@ -191,6 +225,33 @@ class SaleService {
       final capitalRef = _db.collection('counters').doc('capital');
       batch.set(capitalRef, {'balance': FieldValue.increment(-profit)}, SetOptions(merge: true));
     }
+
+    // 5. حذف التذكيرات المرتبطة بهذه الفاتورة
+    final remindersQuery = await _db.collection('reminders')
+        .where('invoiceNumber', isEqualTo: invoiceNumber)
+        .get();
+    for (var remDoc in remindersQuery.docs) {
+      batch.delete(remDoc.reference);
+    }
+
+    // 6. تحديث إحصاءات اليوم بعكس المبيعات
+    final today = DateTime.now();
+    final dayKey = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final statsRef = _db.collection('daily_stats').doc(dayKey);
+    batch.set(statsRef, {
+      'totalSales': FieldValue.increment(-totalAmount),
+      'totalProfit': FieldValue.increment(-profit),
+      'totalOrders': FieldValue.increment(-1),
+      'paidAmount': FieldValue.increment(-paidAmount),
+    }, SetOptions(merge: true));
+
+    // 7. سجل المراقبة
+    final auditRef = _db.collection('audit_logs').doc();
+    batch.set(auditRef, {
+      'action': 'RETURN_SALE',
+      'details': 'إرجاع فاتورة بيع رقم $invoiceNumber للعميل ${data['customerName']} بقيمة $totalAmount',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
 
     batch.update(invoiceDoc.reference, {'status': 'RETURNED'});
     await batch.commit();
@@ -236,6 +297,7 @@ class SaleService {
         'type': 'OUT',
         'description': 'خصم من الصندوق بسبب حذف الفاتورة $invoiceNumber',
         'reference': 'DEL-$invoiceNumber',
+        'category': 'SALE_DELETE',
         'timestamp': FieldValue.serverTimestamp(),
       });
       final cashboxRef = _db.collection('counters').doc('cashbox');
@@ -255,11 +317,30 @@ class SaleService {
       batch.set(capitalRef, {'balance': FieldValue.increment(-profit)}, SetOptions(merge: true));
     }
 
-    // 5. حذف الفاتورة نفسها
+    // 5. حذف التذكيرات المرتبطة بهذه الفاتورة
+    final remindersQuery = await _db.collection('reminders')
+        .where('invoiceNumber', isEqualTo: invoiceNumber)
+        .get();
+    for (var remDoc in remindersQuery.docs) {
+      batch.delete(remDoc.reference);
+    }
+
+    // 6. عكس إحصاءات اليوم
+    final today = DateTime.now();
+    final dayKey = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final statsRef = _db.collection('daily_stats').doc(dayKey);
+    batch.set(statsRef, {
+      'totalSales': FieldValue.increment(-totalAmount),
+      'totalProfit': FieldValue.increment(-profit),
+      'totalOrders': FieldValue.increment(-1),
+      'paidAmount': FieldValue.increment(-paidAmount),
+    }, SetOptions(merge: true));
+
+    // 7. حذف الفاتورة نفسها
     final invoiceRef = _db.collection('sales').doc(invoiceId);
     batch.delete(invoiceRef);
 
-    // 6. سجل المراقبة (Audit Log)
+    // 8. سجل المراقبة (Audit Log)
     final auditRef = _db.collection('audit_logs').doc();
     batch.set(auditRef, {
       'action': 'DELETE_SALE',
@@ -288,6 +369,8 @@ class SaleService {
     final double oldPaidAmount = (oldData['paidAmount'] ?? 0).toDouble();
     final String? oldCustomerId = oldData['customerId'];
 
+    final double newRemainingAmount = totalAmount - newPaidAmount;
+
     // 1. تحديث مستند الفاتورة الرئيسي
     batch.update(invoiceRef, {
       'customerName': customerName,
@@ -295,6 +378,7 @@ class SaleService {
       'warehouseId': warehouseId,
       'createdAt': Timestamp.fromDate(invoiceDate),
       'paidAmount': newPaidAmount,
+      'remainingAmount': newRemainingAmount,
     });
 
     // 2. معالجة الفارق المالي في الصندوق
@@ -306,6 +390,7 @@ class SaleService {
         'type': paidDiff > 0 ? 'IN' : 'OUT',
         'description': 'تعديل المبلغ المدفوع للفاتورة $invoiceNumber',
         'reference': invoiceNumber,
+        'category': 'SALE_UPDATE',
         'timestamp': FieldValue.serverTimestamp(),
       });
       final cashboxRef = _db.collection('counters').doc('cashbox');
@@ -334,7 +419,18 @@ class SaleService {
       }
     }
 
-    // 4. سجل المراقبة
+    // 4. تحديث التذكيرات المرتبطة بهذه الفاتورة إذا تم سداد الدين بالكامل
+    if (newRemainingAmount <= 0) {
+      final remindersQuery = await _db.collection('reminders')
+          .where('invoiceNumber', isEqualTo: invoiceNumber)
+          .where('status', isEqualTo: 'PENDING')
+          .get();
+      for (var remDoc in remindersQuery.docs) {
+        batch.update(remDoc.reference, {'status': 'COMPLETED'});
+      }
+    }
+
+    // 5. سجل المراقبة
     final auditRef = _db.collection('audit_logs').doc();
     batch.set(auditRef, {
       'action': 'UPDATE_SALE',
@@ -345,4 +441,3 @@ class SaleService {
     await batch.commit();
   }
 }
-

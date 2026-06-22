@@ -7,11 +7,13 @@ import '../products/product_form_screen.dart';
 import '../invoices/create_invoice_screen.dart';
 import '../customers/customer_list_screen.dart';
 import '../../services/sale_service.dart';
+import '../../services/pdf_service.dart';
 import '../settings/printer_settings_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../utils/app_settings.dart';
 import '../../utils/app_colors.dart';
 import 'widgets/home_drawer.dart';
+import '../inventory/stock_transfer_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -209,19 +211,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget? _buildFAB() {
     if (_selectedIndex == 1) {
-      return FloatingActionButton.extended(
-        backgroundColor: const Color(0xFF1E3A8A),
-        foregroundColor: Colors.white,
-        elevation: 4,
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const ProductFormScreen()),
-        ),
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('إضافة منتج'),
+      // تبويب المخزون: زران — إضافة منتج + تحويل مخزون
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // زر تحويل المخزون (أعلى)
+          FloatingActionButton.small(
+            heroTag: 'transfer_fab',
+            backgroundColor: const Color(0xFF059669),
+            foregroundColor: Colors.white,
+            elevation: 3,
+            tooltip: 'تحويل مخزون',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const StockTransferScreen()),
+            ),
+            child: const Icon(Icons.swap_horiz_rounded),
+          ),
+          const SizedBox(height: 10),
+          // زر إضافة منتج (أسفل — الرئيسي)
+          FloatingActionButton.extended(
+            heroTag: 'add_product_fab',
+            backgroundColor: const Color(0xFF1E3A8A),
+            foregroundColor: Colors.white,
+            elevation: 4,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ProductFormScreen()),
+            ),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('إضافة منتج'),
+          ),
+        ],
       );
     } else if (_selectedIndex == 2) {
       return FloatingActionButton.extended(
+        heroTag: 'add_invoice_fab',
         backgroundColor: const Color(0xFF059669),
         foregroundColor: Colors.white,
         elevation: 4,
@@ -509,35 +535,23 @@ class _HomeScreenState extends State<HomeScreen> {
               totalCostValue += currentStock * purchasePrice;
               totalRetailValue += currentStock * retailPrice;
             }
-            return Container(
-              padding: const EdgeInsets.all(16),
-              margin: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.02),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Column(
                 children: [
                   Row(
                     children: [
-                      _buildMiniStat('أصناف المخزن', '$totalProducts صنف', const Color(0xFF1E3A8A)),
-                      const SizedBox(width: 8),
-                      _buildMiniStat('إجمالي القطع', '$totalStockItems قطعة', const Color(0xFF7C3AED)),
+                      _buildMiniStat('أصناف المخزن', '$totalProducts صنف', const Color(0xFF1E3A8A), Icons.grid_view_rounded),
+                      const SizedBox(width: 10),
+                      _buildMiniStat('إجمالي القطع', '$totalStockItems قطعة', const Color(0xFF7C3AED), Icons.inventory_2_rounded),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
-                      _buildMiniStat('قيمة الشراء', '${totalCostValue.toStringAsFixed(1)} ${AppSettings.currency}', const Color(0xFF059669)),
-                      const SizedBox(width: 8),
-                      _buildMiniStat('قيمة البيع', '${totalRetailValue.toStringAsFixed(1)} ${AppSettings.currency}', const Color(0xFF0D9488)),
+                      _buildMiniStat('قيمة الشراء', '${totalCostValue.toStringAsFixed(1)} ${AppSettings.currency}', const Color(0xFF059669), Icons.account_balance_wallet_rounded),
+                      const SizedBox(width: 10),
+                      _buildMiniStat('قيمة البيع', '${totalRetailValue.toStringAsFixed(1)} ${AppSettings.currency}', const Color(0xFF0D9488), Icons.analytics_rounded),
                     ],
                   ),
                 ],
@@ -546,76 +560,91 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
 
-        // 2. أدوات البحث والفلترة
+        // 2. حقل البحث
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'بحث بالاسم أو الباركود...',
-                    hintStyle: const TextStyle(fontSize: 13),
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20, color: Color(0xFF64748B)),
-                    isDense: true,
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFF1E3A8A), width: 1.5),
-                    ),
-                  ),
-                  onChanged: (v) => setState(() => _searchQuery = v),
-                ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'بحث بالاسم أو الباركود...',
+              hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+              prefixIcon: const Icon(Icons.search_rounded, size: 22, color: Color(0xFF64748B)),
+              isDense: true,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 1,
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance.collection('categories').snapshots(),
-                  builder: (context, catSnapshot) {
-                    List<DropdownMenuItem<String>> items = [
-                      const DropdownMenuItem(value: 'ALL', child: Text('كل الأصناف', style: TextStyle(fontSize: 12))),
-                    ];
-                    if (catSnapshot.hasData) {
-                      for (var doc in catSnapshot.data!.docs) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        items.add(DropdownMenuItem(
-                          value: doc.id,
-                          child: Text(data['name'] ?? '', style: const TextStyle(fontSize: 12)),
-                        ));
-                      }
-                    }
-                    return DropdownButtonFormField<String>(
-                      value: _selectedCategoryFilter ?? 'ALL',
-                      decoration: InputDecoration(
-                        isDense: true,
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFF1E3A8A)),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: Color(0xFF1E3A8A), width: 1.5),
+              ),
+            ),
+            onChanged: (v) => setState(() => _searchQuery = v),
+          ),
+        ),
+
+        // 3. تصنيفات المنتجات (أزرار أفقية Choice Chips)
+        SizedBox(
+          height: 48,
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('categories').snapshots(),
+            builder: (context, catSnapshot) {
+              final List<Map<String, dynamic>> categories = [
+                {'id': 'ALL', 'name': 'الكل'},
+              ];
+              if (catSnapshot.hasData) {
+                for (var doc in catSnapshot.data!.docs) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  categories.add({
+                    'id': doc.id,
+                    'name': data['name'] ?? '',
+                  });
+                }
+              }
+              return ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                itemCount: categories.length,
+                itemBuilder: (context, index) {
+                  final cat = categories[index];
+                  final isSelected = (_selectedCategoryFilter == null && cat['id'] == 'ALL') ||
+                                    (_selectedCategoryFilter == cat['id']);
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 8.0),
+                    child: ChoiceChip(
+                      label: Text(
+                        cat['name'],
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : const Color(0xFF475569),
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 13,
                         ),
                       ),
-                      items: items,
-                      onChanged: (v) => setState(() => _selectedCategoryFilter = v == 'ALL' ? null : v),
-                    );
-                  },
-                ),
-              ),
-            ],
+                      selected: isSelected,
+                      selectedColor: const Color(0xFF1E3A8A),
+                      backgroundColor: Colors.white,
+                      shadowColor: Colors.black.withOpacity(0.05),
+                      elevation: isSelected ? 2 : 0,
+                      pressElevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: isSelected ? Colors.transparent : const Color(0xFFE2E8F0),
+                        ),
+                      ),
+                      onSelected: (selected) {
+                        setState(() {
+                          _selectedCategoryFilter = cat['id'] == 'ALL' ? null : cat['id'];
+                        });
+                      },
+                    ),
+                  );
+                },
+              );
+            },
           ),
         ),
 
@@ -653,80 +682,179 @@ class _HomeScreenState extends State<HomeScreen> {
               }
 
               return ListView.builder(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 itemCount: filteredDocs.length,
                 itemBuilder: (context, index) {
                   var doc = filteredDocs[index];
                   var data = doc.data() as Map<String, dynamic>;
                   int currentStock = data['currentStock'] ?? 0;
                   int minStock = data['minStock'] ?? 5;
-                  return Card(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 0,
-                    borderOnForeground: false,
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFF1F5F9)),
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        leading: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: currentStock > minStock ? const Color(0xFFEEF2F6) : const Color(0xFFFEF2F2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.inventory_2_rounded,
-                            color: currentStock > minStock ? const Color(0xFF1E3A8A) : const Color(0xFFEF4444),
-                          ),
+                  
+                  final double purchasePrice = (data['purchasePrice'] ?? 0.0).toDouble();
+                  final double retailPrice = (data['retailPrice'] ?? 0.0).toDouble();
+                  final String barcode = data['barcode'] ?? '';
+                  final String name = data['name'] ?? '';
+                  
+                  // Stock status color and label
+                  Color statusColor;
+                  Color statusBgColor;
+                  String statusLabel;
+                  
+                  if (currentStock <= 0) {
+                    statusColor = const Color(0xFFDC2626); // Red
+                    statusBgColor = const Color(0xFFFEF2F2);
+                    statusLabel = 'نفذ المخزن';
+                  } else if (currentStock <= minStock) {
+                    statusColor = const Color(0xFFD97706); // Amber
+                    statusBgColor = const Color(0xFFFFFBEB);
+                    statusLabel = 'مخزون منخفض: $currentStock';
+                  } else {
+                    statusColor = const Color(0xFF059669); // Green
+                    statusBgColor = const Color(0xFFECFDF5);
+                    statusLabel = 'متوفر: $currentStock';
+                  }
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12, left: 16, right: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFFF1F5F9)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.01),
+                          blurRadius: 15,
+                          offset: const Offset(0, 4),
                         ),
-                        title: Text(data['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 4.0),
-                          child: Text(
-                            'شراء: ${data['purchasePrice'] ?? 0} ${AppSettings.currency} | بيع: ${data['retailPrice'] ?? 0} ${AppSettings.currency}\nباركود: ${data['barcode'] ?? ""}',
-                            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                          ),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
+                      ],
+                    ),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // 1. أيقونة المنتج أو شكل الحزمة
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: currentStock > minStock ? const Color(0xFFD1FAE5) : const Color(0xFFFEE2E2),
-                                borderRadius: BorderRadius.circular(10),
+                                color: statusColor.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Icon(
+                                Icons.inventory_2_rounded,
+                                color: statusColor,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            // 2. تفاصيل المنتج الأساسية
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      color: Color(0xFF0F172A),
+                                    ),
+                                  ),
+                                  if (barcode.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.qr_code_rounded, size: 14, color: Color(0xFF94A3B8)),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          barcode,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: Color(0xFF94A3B8),
+                                            fontFamily: 'monospace',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            // 3. شارة حالة المخزون
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: statusBgColor,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: statusColor.withOpacity(0.1)),
                               ),
                               child: Text(
-                                '$currentStock',
+                                statusLabel,
                                 style: TextStyle(
-                                  color: currentStock > minStock ? const Color(0xFF065F46) : const Color(0xFF991B1B),
-                                  fontSize: 12,
+                                  color: statusColor,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: const Icon(Icons.edit_rounded, color: Color(0xFFD97706), size: 20),
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ProductFormScreen(product: data, productId: doc.id),
-                                ),
-                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            // عرض الأسعار بشكل مرتب
+                            Row(
+                              children: [
+                                _buildPriceTag('سعر البيع', retailPrice, const Color(0xFF059669)),
+                                const SizedBox(width: 16),
+                                _buildPriceTag('سعر الشراء', purchasePrice, const Color(0xFF64748B)),
+                              ],
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 20),
-                              onPressed: () => _deleteProduct(doc.id, data['name'] ?? ''),
+                            // أزرار التحكم
+                            Row(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                                  ),
+                                  child: IconButton(
+                                    constraints: const BoxConstraints(),
+                                    padding: const EdgeInsets.all(8),
+                                    icon: const Icon(Icons.edit_rounded, color: Color(0xFFD97706), size: 18),
+                                    onPressed: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => ProductFormScreen(product: data, productId: doc.id),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFEF2F2),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: const Color(0xFFFEE2E2)),
+                                  ),
+                                  child: IconButton(
+                                    constraints: const BoxConstraints(),
+                                    padding: const EdgeInsets.all(8),
+                                    icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 18),
+                                    onPressed: () => _deleteProduct(doc.id, name),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ),
+                      ],
                     ),
                   );
                 },
@@ -738,24 +866,74 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildMiniStat(String title, String value, Color color) {
+  Widget _buildMiniStat(String title, String value, Color color, IconData icon) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.12)),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFF1F5F9)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.01),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Text(title, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 3),
-            Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 20),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(color: Color(0xFF64748B), fontSize: 10, fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPriceTag(String label, double price, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '${price.toStringAsFixed(1)} ${AppSettings.currency}',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color),
+        ),
+      ],
     );
   }
 
@@ -866,6 +1044,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final status = data['status'] ?? 'COMPLETED';
     final List<dynamic> items = data['items'] ?? [];
     final double totalAmount = (data['totalAmount'] ?? 0).toDouble();
+    final double discount = (data['discount'] ?? 0).toDouble();
+    final double subTotal = totalAmount + discount;
     final double paidAmount = (data['paidAmount'] ?? 0).toDouble();
     final double debt = totalAmount - paidAmount;
     final double profit = (data['profit'] ?? 0).toDouble();
@@ -953,7 +1133,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Divider(color: Color(0xFFE2E8F0)),
-                  _buildDetailRow('المبلغ الإجمالي', '${totalAmount.toStringAsFixed(1)} ${AppSettings.currency}', isBold: true),
+                  if (discount > 0) ...[
+                    _buildDetailRow('إجمالي المنتجات', '${subTotal.toStringAsFixed(1)} ${AppSettings.currency}'),
+                    _buildDetailRow('الخصم الممنوح', '${discount.toStringAsFixed(1)} ${AppSettings.currency}', color: const Color(0xFFEF4444)),
+                    _buildDetailRow('المبلغ الإجمالي (بعد الخصم)', '${totalAmount.toStringAsFixed(1)} ${AppSettings.currency}', isBold: true),
+                  ] else ...[
+                    _buildDetailRow('المبلغ الإجمالي', '${totalAmount.toStringAsFixed(1)} ${AppSettings.currency}', isBold: true),
+                  ],
                   _buildDetailRow('المبلغ المدفوع', '${paidAmount.toStringAsFixed(1)} ${AppSettings.currency}', color: const Color(0xFF059669)),
                   _buildDetailRow('المتبقي (الدين)', '${debt.toStringAsFixed(1)} ${AppSettings.currency}', color: debt > 0 ? const Color(0xFFEF4444) : Colors.black),
                   const Divider(color: Color(0xFFE2E8F0)),
@@ -965,7 +1151,57 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: _buildDetailRow('صافي الربح من الفاتورة', '${profit.toStringAsFixed(1)} ${AppSettings.currency}', color: const Color(0xFF1E3A8A), isBold: true),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 20),
+
+                  // ── صف أزرار الطباعة والمشاركة ─────────────────────
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            await PdfService.printInvoicePdf(
+                              invoiceData: data,
+                              context: context,
+                            );
+                          },
+                          icon: const Icon(Icons.print_rounded, size: 18),
+                          label: const Text('طباعة'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF1E3A8A),
+                            side: const BorderSide(color: Color(0xFF1E3A8A)),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            await PdfService.shareInvoicePdf(
+                              invoiceData: data,
+                              context: context,
+                            );
+                          },
+                          icon: const Icon(Icons.share_rounded, size: 18),
+                          label: const Text('مشاركة PDF'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // ── صف أزرار الإجراءات (إرجاع / تعديل / حذف) ─────────
                   Row(
                     children: [
                       if (status != 'RETURNED') ...[

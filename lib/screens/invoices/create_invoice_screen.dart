@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/sale_service.dart';
+import '../../services/pdf_service.dart';
 import '../../models/customer.dart';
 import '../shared/scanner_screen.dart';
 import '../../utils/app_settings.dart';
@@ -16,6 +17,7 @@ class CreateInvoiceScreen extends StatefulWidget {
 class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
   final _customerNameController = TextEditingController();
   final _paidAmountController = TextEditingController();
+  final _discountController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
   final List<Map<String, dynamic>> _selectedProducts = [];
   bool _isLoading = false;
@@ -31,12 +33,16 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
     _paidAmountController.addListener(() {
       setState(() {});
     });
+    _discountController.addListener(() {
+      setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _customerNameController.dispose();
     _paidAmountController.dispose();
+    _discountController.dispose();
     super.dispose();
   }
 
@@ -362,7 +368,16 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
     );
   }
 
-  double get _totalAmount => _selectedProducts.fold(0.0, (total, item) => total + (item['price'] * item['quantity']));
+  double get _subTotal => _selectedProducts.fold(0.0, (total, item) => total + (item['price'] * item['quantity']));
+
+  double get _discount {
+    return double.tryParse(_discountController.text) ?? 0;
+  }
+
+  double get _totalAmount {
+    double total = _subTotal - _discount;
+    return total > 0 ? total : 0;
+  }
 
   double get _paidAmount {
     return double.tryParse(_paidAmountController.text) ?? 0;
@@ -400,6 +415,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
         items: _selectedProducts,
         totalAmount: _totalAmount,
         paidAmount: paidAmount,
+        discount: _discount,
         warehouseId: _selectedWarehouse,
         invoiceDate: _selectedDate,
         dueDate: _remainingAmount > 0 ? _dueDate : null,
@@ -419,7 +435,6 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
             SnackBar(content: Text('تم إصدار الفاتورة بنجاح: $invoiceNumber')),
           );
         } else {
-          // في حال تأخر الرد، نبلغ المستخدم بأنه تم الحفظ محلياً وسيتم المزامنة تلقائياً
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('تم حفظ الفاتورة محلياً وسيتم مزامنتها فور توفر الإنترنت: $invoiceNumber'),
@@ -427,6 +442,104 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
             ),
           );
         }
+
+        // ── ديالوج الطباعة والمشاركة بعد حفظ الفاتورة ───────────────
+        final invoiceData = {
+          'invoiceNumber': invoiceNumber,
+          'customerName': _selectedCustomer!.storeName,
+          'totalAmount': _totalAmount,
+          'paidAmount': paidAmount,
+          'discount': _discount,
+          'warehouseId': _selectedWarehouse,
+          'createdAt': DateTime.now(),
+          'items': _selectedProducts,
+        };
+
+        await showDialog(
+          context: context,
+          barrierDismissible: true,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF059669).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 40),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'تم حفظ الفاتورة بنجاح!',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  invoiceNumber,
+                  style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'ماذا تريد أن تفعل بالفاتورة؟',
+                  style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          await PdfService.printInvoicePdf(
+                            invoiceData: invoiceData,
+                            context: context,
+                          );
+                        },
+                        icon: const Icon(Icons.print_rounded, size: 18),
+                        label: const Text('طباعة'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF1E3A8A),
+                          side: const BorderSide(color: Color(0xFF1E3A8A)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          await PdfService.shareInvoicePdf(
+                            invoiceData: invoiceData,
+                            context: context,
+                          );
+                        },
+                        icon: const Icon(Icons.share_rounded, size: 18),
+                        label: const Text('مشاركة'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF25D366),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('تخطي', style: TextStyle(color: Colors.grey)),
+                ),
+              ],
+            ),
+          ),
+        );
+
         Navigator.pop(context);
       }
     } catch (e) {
@@ -532,6 +645,52 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
                       ),
                       const SizedBox(width: 10),
                       Expanded(
+                        child: TextField(
+                          controller: _discountController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'الخصم',
+                            labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                            prefixIcon: const Icon(Icons.discount_outlined, color: Color(0xFF64748B)),
+                            filled: true,
+                            fillColor: const Color(0xFFF8FAFC),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF0F172A), width: 1.5)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: _pickDate,
+                          borderRadius: BorderRadius.circular(14),
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'تاريخ الفاتورة',
+                              labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                              prefixIcon: const Icon(Icons.calendar_today_outlined, color: Color(0xFF64748B), size: 20),
+                              filled: true,
+                              fillColor: const Color(0xFFF8FAFC),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF0F172A), width: 1.5)),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            ),
+                            child: Text(
+                              "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
+                              style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
                         child: DropdownButtonFormField<String>(
                           value: _selectedWarehouse,
                           decoration: InputDecoration(
@@ -552,28 +711,6 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  InkWell(
-                    onTap: _pickDate,
-                    borderRadius: BorderRadius.circular(14),
-                    child: InputDecorator(
-                      decoration: InputDecoration(
-                        labelText: 'تاريخ الفاتورة',
-                        labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                        prefixIcon: const Icon(Icons.calendar_today_outlined, color: Color(0xFF64748B), size: 20),
-                        filled: true,
-                        fillColor: const Color(0xFFF8FAFC),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF0F172A), width: 1.5)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      ),
-                      child: Text(
-                        "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
-                        style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
-                      ),
-                    ),
                   ),
                   if (_remainingAmount > 0) ...[
                     const SizedBox(height: 12),
@@ -693,6 +830,24 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (_discount > 0) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('المجموع الفرعي:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF64748B))),
+                      Text('${_subTotal.toStringAsFixed(1)} ${AppSettings.currency}', style: const TextStyle(fontSize: 16, color: Color(0xFF0F172A), fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('الخصم الممنوح:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFEF4444))),
+                      Text('-${_discount.toStringAsFixed(1)} ${AppSettings.currency}', style: const TextStyle(fontSize: 16, color: Color(0xFFEF4444), fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
